@@ -5,6 +5,10 @@
 # State file to track progress
 STATE_FILE=".litup_state"
 
+# Variables
+VENV_ACTIVATED=false
+VENV_PATH=""
+
 # Function to save state
 function save_state() {
     echo "$1" > "$STATE_FILE"
@@ -200,13 +204,15 @@ for STEP in "${STEPS[@]}"; do
 
             "CHECK_TOOLS")
                 echo "=== Step: CHECK_TOOLS ==="
-                REQUIRED_CMDS=("git" "python3" "pip3" "nginx" "certbot" "systemctl" "lsof")
+                REQUIRED_CMDS=("git" "python3" "pip3" "nginx" "certbot" "systemctl" "lsof" "curl" "dig")
                 for cmd in "${REQUIRED_CMDS[@]}"; do
                     if ! command_exists "$cmd"; then
                         read -p "$cmd is not installed. Do you want to install it? (y/n): " install_cmd
                         if [ "$install_cmd" == "y" ]; then
                             if [ "$cmd" == "certbot" ]; then
                                 sudo snap install --classic certbot
+                            elif [ "$cmd" == "dig" ]; then
+                                sudo apt-get install -y dnsutils
                             else
                                 sudo apt-get install -y "$cmd"
                             fi
@@ -280,6 +286,7 @@ for STEP in "${STEPS[@]}"; do
             "SETUP_VENV")
                 echo "=== Step: SETUP_VENV ==="
                 cd "$SERVER_ROOT/$REPO_NAME" || { echo "Cannot change to directory $REPO_NAME"; exit 1; }
+                VENV_PATH="$SERVER_ROOT/$REPO_NAME/venv"
                 if [ -d "venv" ]; then
                     echo "Virtual environment already exists."
                     read -p "Do you want to recreate it? (y/n): " recreate_venv
@@ -297,12 +304,14 @@ for STEP in "${STEPS[@]}"; do
 
             "ACTIVATE_VENV")
                 echo "=== Step: ACTIVATE_VENV ==="
-                echo "Command: source venv/bin/activate"
+                echo "Command: source $VENV_PATH/bin/activate"
                 read -p "Run this command? (y/n): " confirm
                 if [ "$confirm" == "y" ]; then
-                    source venv/bin/activate
+                    source "$VENV_PATH/bin/activate"
+                    VENV_ACTIVATED=true
                 else
                     echo "Skipping activation of virtual environment."
+                    VENV_ACTIVATED=false
                 fi
                 save_state "ACTIVATE_VENV"
                 ;;
@@ -321,6 +330,19 @@ for STEP in "${STEPS[@]}"; do
                     echo "No requirements.txt found."
                 fi
                 save_state "INSTALL_REQUIREMENTS"
+
+                # Deactivate and reactivate virtual environment
+                if [ "$VENV_ACTIVATED" == "true" ]; then
+                    echo "Deactivating and reactivating the virtual environment to ensure packages are recognized."
+                    if command -v deactivate >/dev/null 2>&1; then
+                        confirm_and_run "deactivate"
+                        confirm_and_run "source $VENV_PATH/bin/activate"
+                    else
+                        echo "Virtual environment is not currently activated. Skipping deactivation/reactivation."
+                    fi
+                else
+                    echo "Virtual environment is not activated. Skipping deactivation/reactivation."
+                fi
                 ;;
 
             "INSTALL_ADDITIONAL_PIP")
@@ -331,6 +353,19 @@ for STEP in "${STEPS[@]}"; do
                     confirm_and_run "pip install $PIP_PACKAGES"
                 fi
                 save_state "INSTALL_ADDITIONAL_PIP"
+
+                # Deactivate and reactivate virtual environment
+                if [ "$VENV_ACTIVATED" == "true" ]; then
+                    echo "Deactivating and reactivating the virtual environment to ensure packages are recognized."
+                    if command -v deactivate >/dev/null 2>&1; then
+                        confirm_and_run "deactivate"
+                        confirm_and_run "source $VENV_PATH/bin/activate"
+                    else
+                        echo "Virtual environment is not currently activated. Skipping deactivation/reactivation."
+                    fi
+                else
+                    echo "Virtual environment is not activated. Skipping deactivation/reactivation."
+                fi
                 ;;
 
             "CONFIGURE_STREAMLIT")
@@ -460,8 +495,8 @@ After=network.target
 User=$CURRENT_USER
 Group=$CURRENT_USER
 WorkingDirectory=$SERVER_ROOT/$REPO_NAME
-Environment="PATH=$SERVER_ROOT/$REPO_NAME/venv/bin"
-ExecStart=$SERVER_ROOT/$REPO_NAME/venv/bin/streamlit run $FULL_APP_PATH
+Environment="PATH=$VENV_PATH/bin"
+ExecStart=$VENV_PATH/bin/streamlit run $FULL_APP_PATH
 Restart=always
 
 [Install]
