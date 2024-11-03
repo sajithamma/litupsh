@@ -614,6 +614,7 @@ EOL
 server {
     listen 80;
     server_name $DOMAIN_NAME;
+    client_max_body_size 512M;
 
     location / {
         proxy_pass http://localhost:$STREAMLIT_PORT;
