@@ -47,6 +47,7 @@ function usage() {
     echo "  SET_SERVER_ROOT"
     echo "  CHECK_TOOLS"
     echo "  CLONE_REPO"
+    echo "  CREATE_ENV_FILE"
     echo "  SETUP_PYTHON"
     echo "  SETUP_VENV"
     echo "  ACTIVATE_VENV"
@@ -124,7 +125,7 @@ fi
 
 # Steps execution
 # Define the list of steps
-STEPS=("SET_SERVER_ROOT" "CHECK_TOOLS" "CLONE_REPO" "SETUP_PYTHON" "SETUP_VENV" "ACTIVATE_VENV" "INSTALL_REQUIREMENTS" "INSTALL_ADDITIONAL_PIP" "CONFIGURE_STREAMLIT" "RUN_STREAMLIT_APP" "CREATE_SERVICE" "NGINX_CONFIG" "COMPLETE")
+STEPS=("SET_SERVER_ROOT" "CHECK_TOOLS" "CLONE_REPO" "CREATE_ENV_FILE" "SETUP_PYTHON" "SETUP_VENV" "ACTIVATE_VENV" "INSTALL_REQUIREMENTS" "INSTALL_ADDITIONAL_PIP" "CONFIGURE_STREAMLIT" "RUN_STREAMLIT_APP" "CREATE_SERVICE" "NGINX_CONFIG" "COMPLETE")
 
 # Function to check if we should execute a step
 function should_execute_step() {
@@ -201,7 +202,7 @@ for STEP in "${STEPS[@]}"; do
                 echo "Server root set to: $SERVER_ROOT"
                 save_state "SET_SERVER_ROOT"
                 ;;
-
+                
             "CHECK_TOOLS")
                 echo "=== Step: CHECK_TOOLS ==="
                 REQUIRED_CMDS=("git" "python3" "pip3" "nginx" "certbot" "systemctl" "lsof" "curl" "dig")
@@ -261,6 +262,43 @@ for STEP in "${STEPS[@]}"; do
                     confirm_and_run "git clone $GIT_REPO_URL"
                 fi
                 save_state "CLONE_REPO"
+                ;;
+
+            "CREATE_ENV_FILE")
+                echo "=== Step: CREATE_ENV_FILE ==="
+                # Change directory to repo folder
+                cd "$SERVER_ROOT/$REPO_NAME" || { echo "Cannot change to directory $SERVER_ROOT/$REPO_NAME"; exit 1; }
+
+                # Ask if the user wants to create a .env file
+                read -p "Do you want to create a .env file inside the project directory? (y/n): " create_env_file
+                if [ "$create_env_file" == "y" ]; then
+                    # Default file name is .env
+                    DEFAULT_ENV_FILE=".env"
+                    read -p "Enter the .env file name [default: $DEFAULT_ENV_FILE]: " ENV_FILE_NAME
+                    if [ -z "$ENV_FILE_NAME" ]; then
+                        ENV_FILE_NAME="$DEFAULT_ENV_FILE"
+                    fi
+                    # Check if file exists
+                    if [ -f "$ENV_FILE_NAME" ]; then
+                        echo "$ENV_FILE_NAME already exists."
+                        read -p "Do you want to open it with vi to edit? (y/n): " edit_env_file
+                        if [ "$edit_env_file" == "y" ]; then
+                            vi "$ENV_FILE_NAME"
+                        else
+                            echo "Skipping editing $ENV_FILE_NAME."
+                        fi
+                    else
+                        # Create the file
+                        echo "Creating $ENV_FILE_NAME"
+                        touch "$ENV_FILE_NAME"
+                        # Ask the user to enter content
+                        echo "Enter the content for $ENV_FILE_NAME (Press Ctrl+D when done):"
+                        cat > "$ENV_FILE_NAME"
+                    fi
+                else
+                    echo "Skipping .env file creation."
+                fi
+                save_state "CREATE_ENV_FILE"
                 ;;
 
             "SETUP_PYTHON")
