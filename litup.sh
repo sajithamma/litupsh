@@ -38,7 +38,7 @@ function confirm_and_run() {
 
 # Function to display usage
 function usage() {
-    echo "Usage: $0 [--step STEP_NAME]"
+    echo "Usage: $0 [--step STEP_NAME] [--currentstate]"
     echo "Available steps:"
     echo "  SET_SERVER_ROOT"
     echo "  CHECK_TOOLS"
@@ -58,6 +58,7 @@ function usage() {
 
 # Parse command-line arguments
 START_STEP=""
+PRINT_STATE=false
 while [[ $# -gt 0 ]]; do
     case $1 in
         --step)
@@ -69,12 +70,30 @@ while [[ $# -gt 0 ]]; do
                 usage
             fi
             ;;
+        --currentstate)
+            PRINT_STATE=true
+            ;;
         *)
             usage
             ;;
     esac
     shift
 done
+
+# Function to print current state
+function print_current_state() {
+    if [ -f "$STATE_FILE" ]; then
+        echo "Current state: $(cat "$STATE_FILE")"
+    else
+        echo "No state saved. The script has not been run yet."
+    fi
+}
+
+# If --currentstate is used, print the state and exit
+if [ "$PRINT_STATE" == "true" ]; then
+    print_current_state
+    exit 0
+fi
 
 # Starting the script
 echo "Welcome to LitUp - Streamlit App Deployer"
@@ -181,7 +200,7 @@ for STEP in "${STEPS[@]}"; do
 
             "CHECK_TOOLS")
                 echo "=== Step: CHECK_TOOLS ==="
-                REQUIRED_CMDS=("git" "python3" "pip3" "nginx" "certbot" "systemctl")
+                REQUIRED_CMDS=("git" "python3" "pip3" "nginx" "certbot" "systemctl" "lsof")
                 for cmd in "${REQUIRED_CMDS[@]}"; do
                     if ! command_exists "$cmd"; then
                         read -p "$cmd is not installed. Do you want to install it? (y/n): " install_cmd
@@ -317,10 +336,26 @@ for STEP in "${STEPS[@]}"; do
             "CONFIGURE_STREAMLIT")
                 echo "=== Step: CONFIGURE_STREAMLIT ==="
                 DEFAULT_STREAMLIT_PORT=8501
-                read -p "Enter Streamlit port [default: $DEFAULT_STREAMLIT_PORT]: " STREAMLIT_PORT
-                if [ -z "$STREAMLIT_PORT" ]; then
-                    STREAMLIT_PORT="$DEFAULT_STREAMLIT_PORT"
-                fi
+                while true; do
+                    read -p "Enter Streamlit port [default: $DEFAULT_STREAMLIT_PORT]: " STREAMLIT_PORT
+                    if [ -z "$STREAMLIT_PORT" ]; then
+                        STREAMLIT_PORT="$DEFAULT_STREAMLIT_PORT"
+                    fi
+                    # Check if port is in use
+                    if lsof -i ":$STREAMLIT_PORT" >/dev/null; then
+                        echo "Port $STREAMLIT_PORT is already in use."
+                        read -p "Do you want to choose a different port? (y/n): " choose_different
+                        if [ "$choose_different" == "y" ]; then
+                            continue
+                        else
+                            echo "Proceeding with port $STREAMLIT_PORT."
+                            break
+                        fi
+                    else
+                        echo "Port $STREAMLIT_PORT is available."
+                        break
+                    fi
+                done
                 # Configure Streamlit port using .streamlit/config.toml
                 mkdir -p .streamlit
                 CONFIG_FILE=".streamlit/config.toml"
@@ -475,6 +510,21 @@ EOL
                 echo "=== Step: NGINX_CONFIG ==="
                 read -p "Enter the domain name to configure Nginx (leave blank to skip): " DOMAIN_NAME
                 if [ ! -z "$DOMAIN_NAME" ]; then
+                    # Check if domain resolves to this server's IP
+                    SERVER_IP=$(curl -s ifconfig.me)
+                    DOMAIN_IPS=$(dig +short "$DOMAIN_NAME" | grep -Eo '([0-9]{1,3}\.){3}[0-9]{1,3}')
+                    if echo "$DOMAIN_IPS" | grep -w "$SERVER_IP" > /dev/null; then
+                        echo "Domain $DOMAIN_NAME resolves to this server's IP ($SERVER_IP)."
+                    else
+                        echo "Warning: Domain $DOMAIN_NAME does not resolve to this server's IP ($SERVER_IP)."
+                        echo "Certbot will not work unless the domain points to this server."
+                        read -p "Do you want to proceed anyway? (y/n): " proceed_certbot
+                        if [ "$proceed_certbot" != "y" ]; then
+                            echo "Skipping Nginx configuration."
+                            save_state "NGINX_CONFIG"
+                            continue
+                        fi
+                    fi
                     # Create Nginx config
                     NGINX_CONFIG_FILE="/etc/nginx/sites-available/$DOMAIN_NAME"
                     if [ -f "$NGINX_CONFIG_FILE" ]; then
